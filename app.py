@@ -1,213 +1,174 @@
 import streamlit as st
-from datetime import date, datetime
+from datetime import date, datetime, time
 from scraper import get_program_data
 
 # ---------------------------------------------------------
-# Basis-opsætning af siden
+# Page Config & CSS for Printing
 # ---------------------------------------------------------
-st.set_page_config(page_title="Cinemateket programudtræk", layout="wide")
+st.set_page_config(page_title="Cinemateket Program", layout="wide")
 
-st.title("Cinemateket – programudtræk")
-
-st.write(
-    "Vælg en periode, så henter vi serier og visninger i Cinematekets program "
-    "for kun de datoer, du har valgt. Udtrækket er tænkt som et printvenligt overblik "
-    "– både til intern brug og til fx at sende til samarbejdspartnere."
-)
-
-# ---------------------------------------------------------
-# Dato-input
-# ---------------------------------------------------------
-col1, col2 = st.columns(2)
-start_date = col1.date_input("Startdato", value=date.today())
-end_date = col2.date_input("Slutdato", value=date.today())
-
-if start_date > end_date:
-    st.error("Startdato kan ikke være efter slutdato. Ret datoerne.")
-else:
-    if st.button("Hent program"):
-        with st.spinner("Henter program og genererer udtræk..."):
-            data = get_program_data(
-                datetime.combine(start_date, datetime.min.time()),
-                datetime.combine(end_date, datetime.max.time()),
-            )
-
-        series_data = data.get("series", []) or []
-        films_data = data.get("films", []) or []
-
-        if not series_data and not films_data:
-            st.info("Ingen visninger fundet i den valgte periode.")
-        else:
-            # -------------------------------------------------
-            # Sektion: Serier
-            # -------------------------------------------------
-            if series_data:
-                st.header("Serier med visninger i perioden")
-                st.write(
-                    "Herunder vises alle serier, der har visninger i den valgte periode. "
-                    "Under hver serie kan du se de konkrete filmvisninger med tid og billetlink."
-                )
-
-                for serie in series_data:
-                    title = serie.get("title", "Ukendt serie")
-                    description = serie.get("description", "").strip()
-                    image_url = serie.get("image_url")
-                    tickets = serie.get("tickets", [])
-
-                    # Sortér visninger efter dato
-                    tickets = sorted(
-                        tickets,
-                        key=lambda t: t.get("date") or datetime(2100, 1, 1),
-                    )
-
-                    with st.expander(title, expanded=False):
-                        # Serie-beskrivelse
-                        if image_url:
-                            img_col, txt_col = st.columns([1, 2])
-                            with img_col:
-                                st.image(image_url, use_column_width=True)
-                            with txt_col:
-                                if description:
-                                    st.write(description)
-                        else:
-                            if description:
-                                st.write(description)
-
-                        if not tickets:
-                            st.write("Ingen visninger i den valgte periode.")
-                        else:
-                            st.subheader("Visninger i perioden")
-
-                            # Grid i rækker af 3 visninger
-                            for i in range(0, len(tickets), 3):
-                                cols = st.columns(3)
-                                for j in range(3):
-                                    idx = i + j
-                                    if idx >= len(tickets):
-                                        break
-                                    t = tickets[idx]
-                                    with cols[j]:
-                                        film_title = t.get("film", "Ukendt film")
-                                        dt = t.get("date")
-                                        link = t.get("link")
-                                        is_event = bool(t.get("event"))
-
-                                        st.markdown(f"**{film_title}**")
-
-                                        if isinstance(dt, datetime):
-                                            st.write(dt.strftime("%d.%m.%Y kl. %H:%M"))
-
-                                        if is_event:
-                                            st.caption("Event")
-
-                                        if link:
-                                            st.markdown(f"[Køb billet]({link})")
-
-            # -------------------------------------------------
-            # Sektion: Enkeltfilm (alle film uanset serie)
-            # -------------------------------------------------
-            if films_data:
-                st.header("Enkeltfilm i perioden")
-                st.write(
-                    "Herunder vises et samlet overblik over alle filmvisninger i perioden, "
-                    "uanset om de er en del af en serie eller ej."
-                )
-
-                # Flad liste med screenings, så vi kan lave ét samlet grid
-                flat_screenings = []
-                for film in films_data:
-                    film_title = film.get("title", "Ukendt film")
-                    film_desc = (film.get("description") or "").strip()
-                    film_image = film.get("image_url")
-                    film_url = film.get("url")
-                    for s in film.get("screenings", []):
-                        dt = s.get("date")
-                        link = s.get("link")
-                        is_event = bool(s.get("event"))
-
-                        flat_screenings.append(
-                            {
-                                "title": film_title,
-                                "description": film_desc,
-                                "image_url": film_image,
-                                "film_url": film_url,
-                                "date": dt,
-                                "link": link,
-                                "event": is_event,
-                            }
-                        )
-
-                # Sortér efter dato
-                flat_screenings = sorted(
-                    flat_screenings,
-                    key=lambda s: s.get("date") or datetime(2100, 1, 1),
-                )
-
-                if not flat_screenings:
-                    st.write("Ingen enkeltfilm i perioden.")
-                else:
-                    # Grid i rækker af 3 film
-                    for i in range(0, len(flat_screenings), 3):
-                        cols = st.columns(3)
-                        for j in range(3):
-                            idx = i + j
-                            if idx >= len(flat_screenings):
-                                break
-                            item = flat_screenings[idx]
-                            with cols[j]:
-                                title = item.get("title", "Ukendt film")
-                                desc = item.get("description", "")
-                                img = item.get("image_url")
-                                dt = item.get("date")
-                                link = item.get("link")
-                                is_event = bool(item.get("event"))
-                                film_url = item.get("film_url")
-
-                                if img:
-                                    st.image(img, use_column_width=True)
-
-                                st.markdown(f"### {title}")
-
-                                if dt and isinstance(dt, datetime):
-                                    st.write(dt.strftime("%d.%m.%Y kl. %H:%M"))
-
-                                if is_event:
-                                    st.caption("Event")
-
-                                # Kort tekst – så print ikke bliver alt for langt
-                                if desc:
-                                    kort = (desc[:280] + "…") if len(desc) > 280 else desc
-                                    st.write(kort)
-
-                                if link:
-                                    st.markdown(f"[Køb billet]({link})")
-                                elif film_url:
-                                    st.markdown(f"[Læs mere]({film_url})")
-
-# ---------------------------------------------------------
-# Printvenlig CSS
-# ---------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    /* Gør layout mere printvenligt */
+st.markdown("""
+<style>
     @media print {
-        header, footer, .stButton, .stDateInput, .stSidebar {
-            display: none !important;
+        /* Skjul UI elementer ved print */
+        header, footer, .stButton, .stDateInput, [data-testid="stSidebar"], .block-container {
+            padding-top: 0 !important;
+            margin-top: 0 !important;
         }
-        .block-container {
-            padding: 0 1rem !important;
+        button, .stAppDeployButton { display: none !important; }
+        
+        /* Typography for print */
+        body { font-size: 11pt; color: black; font-family: sans-serif; }
+        h1 { font-size: 20pt; margin-bottom: 10px; }
+        h2 { font-size: 16pt; margin-top: 20px; border-bottom: 1px solid #ccc; }
+        h3 { font-size: 14pt; margin-top: 10px; break-after: avoid; }
+        p { font-size: 10pt; line-height: 1.4; }
+        a { text-decoration: none; color: black; font-weight: bold; }
+        
+        /* Layout */
+        .series-container { break-inside: avoid; page-break-inside: avoid; margin-bottom: 30px; }
+        .film-grid { display: flex; flex-wrap: wrap; gap: 15px; }
+        .film-card {
+            width: 30%; /* 3 per row */
+            border: 1px solid #eee;
+            padding: 8px;
+            break-inside: avoid;
         }
-        body {
-            color: black !important;
-            background: white !important;
-        }
-        .stExpander {
-            border: none !important;
-            box-shadow: none !important;
+        .film-img {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            margin-bottom: 5px;
         }
     }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+    
+    /* Screen styling */
+    .film-card {
+        border: 1px solid #ddd;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        height: 100%;
+        background: white;
+    }
+    .film-img {
+        width: 100%;
+        height: 150px;
+        object-fit: cover;
+        border-radius: 3px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# UI Logic
+# ---------------------------------------------------------
+
+st.title("Cinemateket: Print-selv Program")
+st.info("💡 Tip: Vælg en periode og tryk 'Hent Program'. Brug derefter browserens 'Print' funktion (Ctrl+P) og vælg 'Gem som PDF' for det bedste resultat.")
+
+# Inputs
+col1, col2 = st.columns(2)
+start_d = col1.date_input("Start Dato", date.today())
+end_d = col2.date_input("Slut Dato", date.today())
+
+if st.button("Hent Program (Scrape DFI)"):
+    if start_d > end_d:
+        st.error("Start dato skal være før slut dato.")
+    else:
+        dt_start = datetime.combine(start_d, time.min)
+        dt_end = datetime.combine(end_d, time.max)
+        
+        # Progress bar setup
+        progress_text = "Forbinder til DFI..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        try:
+            data = get_program_data(dt_start, dt_end, progress_callback=my_bar)
+            my_bar.empty() # Clear progress bar when done
+            
+            series_list = data.get("series", [])
+            film_list = data.get("films", [])
+            
+            st.success(f"Fandt {len(series_list)} serier og {len(film_list)} enkeltfilm.")
+            
+            # --- START PRINT LAYOUT ---
+            
+            if not series_list and not film_list:
+                st.warning("Ingen visninger fundet i denne periode.")
+            else:
+                st.markdown(f"# Program: {start_d.strftime('%d.%m.%Y')} - {end_d.strftime('%d.%m.%Y')}")
+                
+                # 1. VIS SERIER
+                if series_list:
+                    for serie in series_list:
+                        st.markdown("<div class='series-container'>", unsafe_allow_html=True)
+                        st.header(serie['title'])
+                        
+                        # Layout: Image left, Text right
+                        c1, c2 = st.columns([1, 4])
+                        with c1:
+                            if serie.get('image_url'):
+                                st.image(serie['image_url'], use_column_width=True)
+                        with c2:
+                            desc = serie.get('description', '')
+                            # Limit text length for print
+                            st.markdown(f"*{desc[:600]}...*" if len(desc) > 600 else desc)
+                        
+                        st.subheader("Film i denne serie:")
+                        
+                        # Grid loop for films
+                        films_in_series = serie['films']
+                        cols_per_row = 3
+                        
+                        # Custom Grid Logic
+                        for i in range(0, len(films_in_series), cols_per_row):
+                            row_films = films_in_series[i:i+cols_per_row]
+                            cols = st.columns(cols_per_row)
+                            
+                            for idx, film in enumerate(row_films):
+                                with cols[idx]:
+                                    img_html = f'<img src="{film["image_url"]}" class="film-img"/>' if film.get("image_url") else ""
+                                    
+                                    # Create screening links list
+                                    dates_html = ""
+                                    for s in film['screenings']:
+                                        dates_html += f"<div>📅 <a href='{s['link']}'>{s['display_date']}</a></div>"
+
+                                    st.markdown(f"""
+                                    <div class="film-card">
+                                        {img_html}
+                                        <b>{film['title']}</b><br>
+                                        <div style="font-size:0.9em; margin-bottom:5px;">{film['description'][:100]}...</div>
+                                        {dates_html}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        st.divider()
+
+                # 2. VIS ENKELTSTÅENDE FILM
+                if film_list:
+                    st.header("Øvrige Film & Events")
+                    cols_per_row = 3
+                    for i in range(0, len(film_list), cols_per_row):
+                        row_films = film_list[i:i+cols_per_row]
+                        cols = st.columns(cols_per_row)
+                        
+                        for idx, film in enumerate(row_films):
+                            with cols[idx]:
+                                img_html = f'<img src="{film["image_url"]}" class="film-img"/>' if film.get("image_url") else ""
+                                dates_html = ""
+                                for s in film['screenings']:
+                                    dates_html += f"<div>📅 <a href='{s['link']}'>{s['display_date']}</a></div>"
+
+                                st.markdown(f"""
+                                <div class="film-card">
+                                    {img_html}
+                                    <b>{film['title']}</b><br>
+                                    <div style="font-size:0.9em; margin-bottom:5px;">{film['description'][:100]}...</div>
+                                    {dates_html}
+                                </div>
+                                """, unsafe_allow_html=True)
+        
+        except Exception as e:
+            st.error(f"Der opstod en fejl: {e}")
