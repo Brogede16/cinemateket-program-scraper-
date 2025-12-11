@@ -5,10 +5,10 @@ import re
 from urllib.parse import urljoin
 import time
 
-# Base URL for DFI
+# Base URL
 BASE_URL = "https://www.dfi.dk"
 
-# Danish month map for parsing dates
+# Dansk dato-mapping
 DANISH_MONTHS = {
     "januar": 1, "februar": 2, "marts": 3, "april": 4, "maj": 5, "juni": 6,
     "juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "december": 12,
@@ -16,160 +16,108 @@ DANISH_MONTHS = {
     "jul": 7, "aug": 8, "sep": 9, "okt": 10, "nov": 11, "dec": 12
 }
 
-def parse_danish_date_string(date_str, time_str):
-    """
-    Converts strings like '4. januar' and '16:15' into a datetime object.
-    Assumes current year or next year depending on month.
-    """
-    try:
-        # Clean string "Søndag 4. januar" -> "4. januar"
-        clean_date = re.search(r"(\d+)\.?\s+([a-zæøå]+)", date_str.lower())
-        if not clean_date:
-            return None
-        
-        day = int(clean_date.group(1))
-        month_name = clean_date.group(2)
-        month = DANISH_MONTHS.get(month_name[:3], 1) # Try to match first 3 chars if full name fails
-        
-        # Parse time
-        clean_time = time_str.replace(".", ":").strip()
-        hour, minute = map(int, clean_time.split(":"))
-
-        now = datetime.now()
-        year = now.year
-        
-        # Logic: If scraping in Dec for a Jan show, it's next year.
-        # If scraping in Jan for a Dec show, it's last year (unlikely for upcoming tickets).
-        if now.month == 12 and month == 1:
-            year += 1
-        
-        dt = datetime(year, month, day, hour, minute)
-        return dt
-    except Exception as e:
-        # print(f"Date parse error: {e} | Input: {date_str} {time_str}")
-        return None
-
 def get_soup(url):
+    """Henter HTML fra en URL sikkert."""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        r = requests.get(url, headers=headers, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
         return BeautifulSoup(r.content, "lxml")
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        print(f"⚠️ Fejl ved hentning af {url}: {e}")
         return None
 
-def get_all_film_links():
+def parse_danish_date_string(date_str, time_str):
     """
-    Fetches ALL film URLs by iterating through pagination pages.
+    Omdanner 'Søndag 4. januar' og '16:15' til et datetime objekt.
+    Håndterer årsskifte (hvis vi er i dec men booker til jan).
+    """
+    try:
+        # Regex for at finde dag og måned tekst
+        match = re.search(r"(\d+)\.?\s+([a-zæøå]+)", date_str.lower())
+        if not match:
+            return None
+        
+        day = int(match.group(1))
+        month_str = match.group(2)
+        
+        # Find månedsnummer
+        month = DANISH_MONTHS.get(month_str, 0)
+        if month == 0:
+            month = DANISH_MONTHS.get(month_str[:3], 1) # Prøv forkortelse
+        
+        # Tidspunkt
+        clean_time = time_str.replace(".", ":").strip()
+        hour, minute = map(int, clean_time.split(":"))
+
+        # Årstal logik
+        now = datetime.now()
+        year = now.year
+        
+        # Hvis vi er i slutningen af året (okt-dec) og ser en dato i starten (jan-mar), er det næste år
+        if now.month >= 10 and month <= 3:
+            year += 1
+            
+        return datetime(year, month, day, hour, minute)
+    except Exception:
+        return None
+
+def get_all_film_links(progress_callback=None):
+    """
+    Gennemgår alle sider på 'Alle film' oversigten (paginering).
     """
     links = {}
     page = 0
-    has_more = True
+    keep_going = True
     
-    print("Starter indsamling af film-links...")
+    print("🔄 Starter indeksering af alle film...")
     
-    while has_more:
-        # DFI pagination structure: ?page=0, ?page=1, etc.
-        overview_url = f"{BASE_URL}/cinemateket/biograf/alle-film?page={page}"
-        soup = get_soup(overview_url)
+    while keep_going:
+        # URL til oversigtssiden med sidetal
+        url = f"{BASE_URL}/cinemateket/biograf/alle-film?page={page}"
+        soup = get_soup(url)
         
         if not soup:
             break
             
-        found_on_page = 0
-        # Find film links
-        for a in soup.select("a[href^='/cinemateket/biograf/alle-film/film/']"):
+        found_on_this_page = 0
+        
+        # Find alle film-links på denne side
+        movie_links = soup.select("a[href^='/cinemateket/biograf/alle-film/film/']")
+        
+        if not movie_links:
+            keep_going = False
+            break
+            
+        for a in movie_links:
             href = a['href']
             full_url = urljoin(BASE_URL, href)
             title = a.get_text(strip=True)
-            if full_url not in links:
+            
+            if full_url not in links and title:
                 links[full_url] = title
-                found_on_page += 1
+                found_on_this_page += 1
         
-        # Check if we should continue (if no films found, we reached the end)
-        if found_on_page == 0:
-            has_more = False
+        # Feedback til konsollen
+        print(f"   Side {page}: Fandt {found_on_this_page} film.")
+        
+        # Opdater progress bar hvis den findes
+        if progress_callback:
+            progress_callback.progress(0.1, text=f"Scanner oversigter... Side {page} fundet.")
+
+        if found_on_this_page == 0:
+            keep_going = False
         else:
-            print(f"Side {page} færdig: Fandt {found_on_page} film.")
             page += 1
-            # Be polite to the server
-            time.sleep(0.5)
+            # Pause for ikke at overbelaste DFI
+            time.sleep(0.2)
             
     return links
 
-def scrape_film_details(url, start_date, end_date):
-    """
-    Scrapes a specific film page for metadata and screenings within the date range.
-    """
-    soup = get_soup(url)
-    if not soup:
-        return None
-
-    # 1. Basic Metadata
-    title_tag = soup.find("h1")
-    title = title_tag.get_text(strip=True) if title_tag else "Ukendt titel"
-    
-    desc_tag = soup.select_one(".field-name-body .field-item")
-    description = desc_tag.get_text(" ", strip=True) if desc_tag else ""
-
-    img_tag = soup.select_one(".media-element-container img")
-    image_url = img_tag['src'] if img_tag else None
-    
-    # 2. Series info
-    series_title = None
-    series_url = None
-    series_link = soup.select_one(".field-name-field-cinemateket-series .field-item a")
-    if series_link:
-        series_title = series_link.get_text(strip=True)
-        series_url = urljoin(BASE_URL, series_link['href'])
-
-    # 3. Screenings
-    screenings = []
-    
-    # Selecting rows in the ticket section
-    ticket_rows = soup.select(".ct-cinema-movie-showings .ct-cinema-movie-showings__list-item")
-    
-    for row in ticket_rows:
-        try:
-            date_div = row.select_one(".ct-cinema-movie-showings__date")
-            time_div = row.select_one(".ct-cinema-movie-showings__time")
-            link_tag = row.select_one("a.btn-primary") # Ticket link
-            
-            if date_div and time_div and link_tag:
-                date_text = date_div.get_text(strip=True)
-                time_text = time_div.get_text(strip=True)
-                buy_link = link_tag['href']
-                
-                dt = parse_danish_date_string(date_text, time_text)
-                
-                if dt:
-                    if start_date <= dt <= end_date:
-                        screenings.append({
-                            "datetime": dt,
-                            "display_date": dt.strftime("%d-%m-%Y kl. %H:%M"),
-                            "link": buy_link
-                        })
-        except Exception:
-            continue
-
-    if not screenings:
-        return None
-
-    return {
-        "title": title,
-        "description": description,
-        "image_url": image_url,
-        "url": url,
-        "series_title": series_title,
-        "series_url": series_url,
-        "screenings": screenings
-    }
-
 def scrape_series_details(url):
-    """
-    Fetches description and image for a series page.
-    """
+    """Henter info om en serie (billede og beskrivelse)."""
     soup = get_soup(url)
     if not soup:
         return {"description": "", "image_url": None}
@@ -178,6 +126,8 @@ def scrape_series_details(url):
     description = desc_tag.get_text(" ", strip=True) if desc_tag else ""
 
     img_tag = soup.select_one(".media-element-container img")
+    if not img_tag:
+        img_tag = soup.select_one(".img-responsive")
     image_url = img_tag['src'] if img_tag else None
 
     return {
@@ -185,50 +135,138 @@ def scrape_series_details(url):
         "image_url": image_url
     }
 
+def scrape_film_details(url, start_date, end_date):
+    """
+    Scraper en enkelt film for titel, billede, serie og visningstider.
+    """
+    soup = get_soup(url)
+    if not soup:
+        return None
+
+    # 1. Metadata
+    title_tag = soup.find("h1")
+    title = title_tag.get_text(strip=True) if title_tag else "Ukendt titel"
+    
+    desc_tag = soup.select_one(".field-name-body .field-item")
+    description = desc_tag.get_text(" ", strip=True) if desc_tag else ""
+
+    img_tag = soup.select_one(".media-element-container img")
+    image_url = img_tag['src'] if img_tag else None
+
+    # 2. Serie info
+    series_title = None
+    series_url = None
+    series_link = soup.select_one(".field-name-field-cinemateket-series .field-item a")
+    if series_link:
+        series_title = series_link.get_text(strip=True)
+        series_url = urljoin(BASE_URL, series_link['href'])
+
+    # 3. Er det et Event?
+    is_event = False
+    # Tjek labels
+    labels = soup.select(".label-item")
+    for l in labels:
+        if "event" in l.get_text(strip=True).lower():
+            is_event = True
+    # Tjek URL struktur
+    if "/event/" in url:
+        is_event = True
+
+    # 4. Visninger (Screenings)
+    screenings = []
+    rows = soup.select(".ct-cinema-movie-showings__list-item")
+    
+    for row in rows:
+        try:
+            date_el = row.select_one(".ct-cinema-movie-showings__date")
+            time_el = row.select_one(".ct-cinema-movie-showings__time")
+            btn_el = row.select_one("a.btn") 
+            
+            if date_el and time_el and btn_el:
+                date_txt = date_el.get_text(strip=True)
+                time_txt = time_el.get_text(strip=True)
+                link = btn_el['href']
+                
+                dt = parse_danish_date_string(date_txt, time_txt)
+                
+                if dt:
+                    # Tjek om datoen er inden for brugerens valg
+                    if start_date <= dt <= end_date:
+                        screenings.append({
+                            "datetime": dt,
+                            "display_date": dt.strftime("%d-%m-%Y kl. %H:%M"),
+                            "link": link,
+                            "is_sold_out": "udsolgt" in btn_el.get_text().lower()
+                        })
+        except Exception:
+            continue
+
+    # Returner kun data, hvis filmen vises i perioden
+    if not screenings:
+        return None
+
+    return {
+        "title": title,
+        "description": description,
+        "image_url": image_url,
+        "url": url,
+        "is_event": is_event,
+        "series_title": series_title,
+        "series_url": series_url,
+        "screenings": screenings
+    }
+
 def get_program_data(start_date, end_date, progress_callback=None):
     """
-    Main orchestrator.
-    progress_callback: A streamlit progress bar object (optional)
+    Hovedfunktion:
+    1. Henter alle links
+    2. Looper igennem dem og scraper detaljer
+    3. Grupperer i serier
     """
-    film_links = get_all_film_links()
-    total_films = len(film_links)
+    # Trin 1: Hent links (med paginering)
+    film_links_map = get_all_film_links(progress_callback)
+    total_films = len(film_links_map)
     
     series_map = {} 
     standalone_films = []
-
-    print(f"Behandler {total_films} film...")
     
-    for i, (url, _) in enumerate(film_links.items()):
-        # Update progress bar if provided
+    # Trin 2: Scrape hver film
+    film_items = list(film_links_map.items())
+    
+    for i, (url, title) in enumerate(film_items):
+        # Opdater UI progress bar
         if progress_callback:
-            progress_callback.progress((i + 1) / total_films, text=f"Scanner film {i+1} af {total_films}")
-            
-        film_data = scrape_film_details(url, start_date, end_date)
+            percent = 0.1 + (0.9 * ((i + 1) / total_films))
+            # Sikrer at vi ikke går over 1.0
+            percent = min(percent, 1.0)
+            progress_callback.progress(percent, text=f"Scanner {i+1}/{total_films}: {title[:30]}...")
         
-        if not film_data:
-            continue
-            
-        s_url = film_data.get('series_url')
-        if s_url:
-            if s_url not in series_map:
-                s_details = scrape_series_details(s_url)
-                series_map[s_url] = {
-                    "title": film_data['series_title'],
-                    "url": s_url,
-                    "description": s_details['description'],
-                    "image_url": s_details['image_url'],
-                    "films": []
-                }
-            series_map[s_url]['films'].append(film_data)
-        else:
-            standalone_films.append(film_data)
+        data = scrape_film_details(url, start_date, end_date)
+        
+        if data:
+            s_url = data.get('series_url')
+            if s_url:
+                # Tilføj til serie
+                if s_url not in series_map:
+                    s_info = scrape_series_details(s_url)
+                    series_map[s_url] = {
+                        "title": data['series_title'],
+                        "url": s_url,
+                        "description": s_info['description'],
+                        "image_url": s_info['image_url'],
+                        "films": []
+                    }
+                series_map[s_url]['films'].append(data)
+            else:
+                # Tilføj til enkeltstående
+                standalone_films.append(data)
 
-    # Convert map to list and sort by title
+    # Trin 3: Sortering
     final_series = sorted(list(series_map.values()), key=lambda x: x['title'])
-    
-    # Sort films inside series by title
     for s in final_series:
         s['films'].sort(key=lambda x: x['title'])
+        
+    standalone_films.sort(key=lambda x: x['title'])
 
     return {
         "series": final_series,
