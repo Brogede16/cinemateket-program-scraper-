@@ -2,226 +2,263 @@
 <html lang="da">
 <head>
     <meta charset="UTF-8">
-    <title>Cinemateket Programudtræk</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cinemateket Program Generator</title>
     <style>
-        body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; color: #333; background: #fff; }
+        /* Grundlæggende Reset */
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; color: #333; background: #f9f9f9; }
         
-        /* UI Controls (Skjules ved print) */
-        .controls { background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 30px; display: flex; gap: 20px; align-items: flex-end; }
-        .control-group { display: flex; flex-direction: column; }
-        label { font-size: 0.85em; font-weight: bold; margin-bottom: 5px; color: #555; }
-        input[type="date"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-        button { padding: 10px 20px; background: #e31836; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
-        .loader { display: none; color: #e31836; font-weight: bold; margin-left: 10px; }
-
-        /* Layout */
-        .series-block { margin-bottom: 40px; page-break-inside: avoid; border-bottom: 1px solid #eee; padding-bottom: 20px; }
-        .series-header { margin-bottom: 20px; padding-bottom: 10px; }
-        .series-title { font-size: 1.8em; margin: 0; color: #e31836; border-left: 5px solid #e31836; padding-left: 15px; }
-        .series-meta { display: flex; gap: 20px; margin-top: 15px; align-items: flex-start; }
-        .series-banner { width: 150px; height: auto; object-fit: cover; border-radius: 4px; }
-        .series-intro { font-style: italic; font-size: 0.95em; color: #555; max-width: 700px; white-space: pre-line; margin-top: 0; }
-
-        /* Grid - 3 kolonner */
-        .items-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 25px; }
-        .film-card { 
-            break-inside: avoid; 
-            page-break-inside: avoid; 
-            background: white; 
-            display: flex; 
-            flex-direction: column; 
-        }
-        
-        .film-img { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; margin-bottom: 12px; background: #eee; }
-        
-        .film-title { font-weight: bold; font-size: 1.1em; margin-bottom: 5px; line-height: 1.2; color: #000; }
-        
-        /* Synopsis */
-        .film-desc { 
-            font-size: 0.85em; 
-            color: #333; 
-            margin-bottom: 10px; 
-            line-height: 1.4;
-        }
-        
-        /* Credits (Teknik) - Lille og diskret */
-        .film-credits {
-            font-size: 0.75em;
-            color: #888;
-            margin-bottom: 10px;
-            line-height: 1.3;
-            font-style: italic;
-            border-left: 2px solid #eee;
-            padding-left: 8px;
-        }
-
-        /* Datoer (Kompakt visning i bunden) */
-        .film-dates-container {
-            margin-top: auto;
-            border-top: 1px solid #eee; 
-            padding-top: 8px; 
-        }
-        .film-dates-title {
-            font-size: 0.7em;
-            text-transform: uppercase;
-            color: #999;
-            font-weight: bold;
-            margin-bottom: 4px;
-        }
-        .date-badges {
+        /* Kontrolpanel (Skjules ved print) */
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
             display: flex;
-            flex-wrap: wrap;
-            gap: 5px;
+            gap: 20px;
+            align-items: flex-end;
+            max-width: 1200px;
+            margin: 0 auto 30px auto;
         }
-        .date-badge { 
-            display: inline-block; 
-            background: #f4f4f4; 
-            color: #333;
-            padding: 3px 6px; 
-            border-radius: 3px; 
-            font-size: 0.8em;
-            font-weight: 600; 
-            white-space: nowrap;
+        
+        .form-group { display: flex; flex-direction: column; }
+        label { font-size: 12px; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; color: #666; }
+        input, button { padding: 10px; border-radius: 4px; border: 1px solid #ddd; font-size: 14px; }
+        
+        button {
+            background-color: #e31836;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            padding: 10px 20px;
+        }
+        button:hover { background-color: #c4122d; }
+        button:disabled { background-color: #ccc; cursor: wait; }
+
+        /* Loader */
+        .loader { display: none; color: #e31836; font-weight: bold; margin-left: 15px; }
+
+        /* Output Container */
+        #output { max-width: 1200px; margin: 0 auto; }
+
+        /* Serie Header */
+        .series-header {
+            border-bottom: 2px solid #e31836;
+            color: #e31836;
+            margin: 40px 0 20px 0;
+            padding-bottom: 5px;
+            page-break-after: avoid;
+        }
+        .series-title { margin: 0; font-size: 24px; text-transform: uppercase; }
+
+        /* Grid Layout */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
         }
 
+        /* Film Kort */
+        .card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            break-inside: avoid; /* Vigtigt for print */
+            page-break-inside: avoid;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .card-img {
+            width: 100%;
+            height: 160px;
+            object-fit: cover;
+            background: #eee;
+        }
+
+        .card-body {
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+        }
+
+        .film-title {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            font-weight: 800;
+            line-height: 1.2;
+        }
+
+        .film-desc {
+            font-size: 13px;
+            color: #444;
+            line-height: 1.4;
+            margin-bottom: 10px;
+            flex-grow: 1;
+        }
+
+        .film-credits {
+            font-size: 11px;
+            color: #888;
+            font-style: italic;
+            border-top: 1px solid #eee;
+            padding-top: 8px;
+            margin-bottom: 10px;
+        }
+
+        .screenings {
+            margin-top: auto;
+        }
+        
+        .screening-btn {
+            display: inline-block;
+            background: #e31836;
+            color: white;
+            text-decoration: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+        .screening-btn.udsolgt {
+            background: #999;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* PRINT STYLES */
         @media print {
-            .controls, h1, .print-hide { display: none !important; }
-            body { padding: 0; margin: 0; font-size: 10pt; -webkit-print-color-adjust: exact; }
+            body { background: white; padding: 0; }
+            .controls { display: none; }
             
-            /* CSS Grid virker dårligt i nogle print-drivere, brug Flex fallback */
-            .items-grid { display: flex; flex-wrap: wrap; margin: 0 -10px; }
-            .film-card { width: 31%; margin: 10px; box-sizing: border-box; border: none; }
+            /* CSS Grid kan drille i print, så vi laver et simpelt fallback med flex/block hvis nødvendigt, 
+               men moderne browsere printer grid okay. Vi tvinger baggrundsfarver. */
             
-            .series-title { font-size: 1.5em; color: black; border-color: black; }
-            .date-badge { border: 1px solid #ccc; background: white; }
-            .series-block { page-break-after: auto; }
+            .grid {
+                display: flex;
+                flex-wrap: wrap;
+                margin: 0 -10px;
+            }
+            .card {
+                width: calc(33.333% - 20px);
+                margin: 10px;
+                border: 1px solid #ccc;
+                box-shadow: none;
+            }
+            
+            a { text-decoration: none !important; color: black !important; }
+            .screening-btn { 
+                border: 1px solid #000; 
+                background: white !important; 
+                color: black !important; 
+                padding: 2px 5px;
+            }
+            
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
         }
     </style>
 </head>
 <body>
 
-    <h1>Cinemateket Program Generator</h1>
-
     <div class="controls">
-        <div class="control-group">
+        <div class="form-group">
             <label>Start Dato</label>
             <input type="date" id="start">
         </div>
-        <div class="control-group">
+        <div class="form-group">
             <label>Slut Dato</label>
             <input type="date" id="end">
         </div>
-        <div class="control-group">
+        <div class="form-group">
+            <label>&nbsp;</label>
             <button onclick="fetchProgram()" id="btn">Hent Program</button>
         </div>
-        <div class="loader" id="loader">Henter data... (Hav tålmodighed, DFI er langsom)</div>
+        <div class="loader" id="loader">Henter film (ca. 15-30 sek)...</div>
     </div>
 
     <div id="output"></div>
 
     <script>
-        // Sæt default datoer: I dag -> 14 dage frem
+        // Sæt default datoer (i dag -> 1 uge frem)
         const today = new Date().toISOString().split('T')[0];
         document.getElementById('start').value = today;
         const nextWeek = new Date();
-        nextWeek.setDate(nextWeek.getDate() + 14);
+        nextWeek.setDate(nextWeek.getDate() + 7);
         document.getElementById('end').value = nextWeek.toISOString().split('T')[0];
-
-        function formatDateCompact(isoString) {
-            // isoString format: "2023-12-13 14:15" eller "2023-12-13 (Tid ukendt)"
-            if (!isoString) return "";
-            
-            let timePart = "";
-            let datePart = isoString;
-
-            if(isoString.includes(" ")) {
-                [datePart, timePart] = isoString.split(' ', 2);
-            }
-
-            const d = new Date(datePart);
-            
-            // Format: "13. dec."
-            const dayMonth = d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }).replace('.', '');
-            // Ugedag: "Lør"
-            const weekday = d.toLocaleDateString('da-DK', { weekday: 'short' }).replace('.', '');
-            
-            // Hvis tid mangler
-            if (!timePart || timePart.includes("ukendt")) {
-                return `${weekday} ${dayMonth}`;
-            }
-
-            // Resultat: "Lør 13. dec 14:15"
-            return `${weekday} ${dayMonth} ${timePart}`;
-        }
 
         async function fetchProgram() {
             const start = document.getElementById('start').value;
             const end = document.getElementById('end').value;
+            const output = document.getElementById('output');
             const btn = document.getElementById('btn');
             const loader = document.getElementById('loader');
-            const output = document.getElementById('output');
 
             btn.disabled = true;
             loader.style.display = 'inline-block';
             output.innerHTML = '';
 
             try {
-                const res = await fetch(`/program?mode=range&from=${start}&to=${end}`);
-                if (!res.ok) throw new Error("Kunne ikke hente data. Prøv igen om lidt.");
-                const data = await res.json();
+                const response = await fetch(`/program?from=${start}&to=${end}`);
+                const data = await response.json();
 
-                if (!data.series || data.series.length === 0) {
-                    output.innerHTML = '<p>Ingen visninger fundet i denne periode.</p>';
+                if (data.series.length === 0) {
+                    output.innerHTML = '<p style="text-align:center; padding:20px;">Ingen film fundet i perioden. Prøv en anden dato.</p>';
                     return;
                 }
 
                 let html = '';
-                // Print header (skjult på skærm)
-                html += `<div style="margin-bottom:20px; font-size:1.5em; font-weight:bold; display:none;" class="print-header">Cinemateket: ${start} til ${end}</div>`;
 
                 data.series.forEach(serie => {
                     html += `
-                    <div class="series-block">
                         <div class="series-header">
                             <h2 class="series-title">${serie.name}</h2>
-                            ${(serie.intro || serie.banner) ? `
-                            <div class="series-meta">
-                                ${serie.banner ? `<img src="${serie.banner}" class="series-banner">` : ''}
-                                ${serie.intro ? `<div class="series-intro">${serie.intro}</div>` : ''}
-                            </div>` : ''}
                         </div>
-                        <div class="items-grid">
+                        <div class="grid">
                     `;
 
-                    serie.items.forEach(item => {
-                        const dateHtml = item.dates.map(d => {
-                            return `<span class="date-badge">${formatDateCompact(d)}</span>`;
-                        }).join('');
+                    serie.items.forEach(film => {
+                        // Knapper
+                        let btns = '';
+                        film.screenings.forEach(s => {
+                            const isSoldOut = s.status === 'Udsolgt';
+                            const label = `${s.display} ${isSoldOut ? '(Udsolgt)' : ''}`;
+                            const cls = isSoldOut ? 'screening-btn udsolgt' : 'screening-btn';
+                            btns += `<a href="${s.link}" class="${cls}" target="_blank">${label}</a>`;
+                        });
 
-                        const creditsHtml = item.credits ? `<div class="film-credits">${item.credits}</div>` : '';
+                        // Trunkér tekst
+                        let desc = film.description || "";
+                        if (desc.length > 250) desc = desc.substring(0, 250) + "...";
 
                         html += `
-                            <div class="film-card">
-                                ${item.image ? `<img src="${item.image}" class="film-img">` : ''}
-                                <div class="film-title">${item.title}</div>
-                                <div class="film-desc">${item.synopsis || ''}</div>
-                                ${creditsHtml}
-                                <div class="film-dates-container">
-                                    <div class="film-dates-title">Visninger</div>
-                                    <div class="date-badges">${dateHtml}</div>
+                            <div class="card">
+                                ${film.image ? `<img src="${film.image}" class="card-img">` : ''}
+                                <div class="card-body">
+                                    <h3 class="film-title">${film.title}</h3>
+                                    <div class="film-desc">${desc}</div>
+                                    <div class="film-credits">${film.credits || ''}</div>
+                                    <div class="screenings">${btns}</div>
                                 </div>
                             </div>
                         `;
                     });
 
-                    html += `</div></div>`; 
+                    html += `</div>`; // Luk grid
                 });
 
                 output.innerHTML = html;
 
-            } catch (err) {
-                output.innerHTML = `<p style="color:red">Fejl: ${err.message}</p>`;
+            } catch (e) {
+                console.error(e);
+                output.innerHTML = `<p style="color:red; text-align:center;">Fejl: ${e.message}</p>`;
             } finally {
                 btn.disabled = false;
                 loader.style.display = 'none';
