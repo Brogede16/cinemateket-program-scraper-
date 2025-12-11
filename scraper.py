@@ -160,34 +160,36 @@ def parse_danish_date(date_str: str, current_year: Optional[int] = None) -> Opti
 
 def parse_danish_datetime_from_text(text: str, base_date: datetime) -> Optional[datetime]:
     """
-    Parser en linje som fx:
+    Parser en linje med dato + tid, fx:
         'Himlen over Berlin Søndag 4. januar 16:15 Bestil billet'
-        'Offeret Lørdag 13. december 20:00 Bestil billet'
+        '4. januar kl. 16:15 – Køb billet'
     Vi trækker kun dato + tid ud. Årstal afledes fra base_date.
     """
     if not text:
         return None
 
-    cleaned = text.replace("Bestil billet", "")
+    cleaned = (
+        text.replace("Bestil billet", "")
+        .replace("Køb billet", "")
+        .replace("Køb billetter", "")
+    )
     cleaned = " ".join(cleaned.split())
 
-    # Ugedage (case-insensitive)
-    weekday_pattern = (
-        r"(Mandag|Tirsdag|Onsdag|Torsdag|Fredag|Lørdag|Søndag)"
-    )
+    # Ugedage er valgfrie; vi matcher kun dag/måned/tid (HH:MM)
+    weekday_pattern = r"(?:Mandag|Tirsdag|Onsdag|Torsdag|Fredag|Lørdag|Søndag)\s+"
 
-    # Capture: weekday, dag, måned, tid (HH:MM)
+    # Capture: (valgfri ugedag), dag, måned, tid (HH:MM) med evt. 'kl.'
     pattern = (
-        rf"{weekday_pattern}\s+(\d{{1,2}})\.?\s+([A-Za-zæøåÆØÅ]+)\s+(\d{{1,2}}:\d{{2}})"
+        rf"(?:{weekday_pattern})?(\d{{1,2}})\.?\s+([A-Za-zæøåÆØÅ]+)\s+(?:kl\.?\s*)?(\d{{1,2}}:\d{{2}})"
     )
 
     m = re.search(pattern, cleaned, flags=re.IGNORECASE)
     if not m:
         return None
 
-    day = int(m.group(2))
-    month_txt = m.group(3).lower().rstrip(".")
-    time_str = m.group(4)
+    day = int(m.group(1))
+    month_txt = m.group(2).lower().rstrip(".")
+    time_str = m.group(3)
 
     month = MONTH_MAP.get(month_txt)
     if not month:
@@ -381,17 +383,21 @@ def scrape_film(
     description = _extract_description(soup)
     image_url = _extract_image_url(soup)
 
-    # Find alle billetlinks – vi filtrerer på "Bestil billet" i linkteksten
+    # Find alle billetlinks – teksten varierer ("Bestil billet", "Køb billet" m.m.)
     screenings: List[Dict] = []
     for a in soup.find_all("a", href=True):
-        if "Bestil billet" not in a.get_text():
+        link_text = " ".join(a.stripped_strings)
+        aria = a.get("aria-label") or ""
+        combined_text = " ".join([link_text, aria]).strip()
+
+        if "billet" not in combined_text.lower():
             continue
+
         href = a["href"]
         if not href:
             continue
         ticket_url = urljoin(BASE_URL, href)
-        full_text = " ".join(a.stripped_strings)
-        dt = parse_danish_datetime_from_text(full_text, base_date=start_dt)
+        dt = parse_danish_datetime_from_text(combined_text, base_date=start_dt)
         if not dt:
             continue
         if not (start_dt <= dt <= end_dt):
