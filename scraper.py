@@ -586,4 +586,4 @@ def get_program_data(start_dt: datetime, end_dt: datetime) -> Dict:
 
     # Konverter dataklasser til almindelige dicts, som er nemme at bruge i Streamlit
     series_payload: List[Dict] = []
-    for serie in series_map.value_
+    for serie in series_map.values():
