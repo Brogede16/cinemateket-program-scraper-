@@ -122,14 +122,17 @@ def _parse_time(time_str: str) -> time:
     """
     Parse '17:45' til datetime.time.
     """
-    time_str = time_str.strip()
-    # Simpelt format: HH:MM
-    try:
-        hour, minute = time_str.split(":")
-        return time(int(hour), int(minute))
-    except Exception:
-        # Fallback til 00:00 hvis noget går galt
-        return time(0, 0)
+    # Understøt både "17:45", "17.45" og formater med evt. "kl. "-prefix.
+    match = re.search(r"(\d{1,2})[:\.]?(\d{2})", time_str)
+    if match:
+        hour, minute = match.groups()
+        try:
+            return time(int(hour), int(minute))
+        except ValueError:
+            pass
+
+    # Fallback til 00:00 hvis noget går galt
+    return time(0, 0)
 
 
 def _scrape_day_screenings(d: date) -> List[Dict]:
@@ -186,7 +189,8 @@ def _scrape_day_screenings(d: date) -> List[Dict]:
         series_url = None
         for p in item.select("div.list-item__properties p.list-item__property"):
             txt = p.get_text(" ", strip=True).lower()
-            if txt.startswith("serier"):
+            # Nogle steder bruges "Serie:" og andre "Serier:" – tjek for begge.
+            if "serie" in txt:
                 a = p.find("a")
                 if a and a.get("href"):
                     series_title = a.get_text(strip=True)
