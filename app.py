@@ -1,18 +1,23 @@
 import streamlit as st
 from datetime import date, datetime
-import pandas as pd
 from scraper import get_program_data
 
-# Side-opsætning
+# ---------------------------------------------------------
+# Basis-opsætning af siden
+# ---------------------------------------------------------
 st.set_page_config(page_title="Cinemateket programudtræk", layout="wide")
+
 st.title("Cinemateket – programudtræk")
 
 st.write(
     "Vælg en periode, så henter vi serier og visninger i Cinematekets program "
-    "for kun de datoer, du har valgt. Udtrækket er tænkt som et printvenligt overblik."
+    "for kun de datoer, du har valgt. Udtrækket er tænkt som et printvenligt overblik "
+    "– både til intern brug og til fx at sende til samarbejdspartnere."
 )
 
+# ---------------------------------------------------------
 # Dato-input
+# ---------------------------------------------------------
 col1, col2 = st.columns(2)
 start_date = col1.date_input("Startdato", value=date.today())
 end_date = col2.date_input("Slutdato", value=date.today())
@@ -27,143 +32,171 @@ else:
                 datetime.combine(end_date, datetime.max.time()),
             )
 
-        # --- SERIER ---
-        st.header("Serier")
+        series_data = data.get("series", []) or []
+        films_data = data.get("films", []) or []
 
-        series_list = data.get("series", [])
-        if not series_list:
-            st.info("Ingen serier fundet i den valgte periode.")
+        if not series_data and not films_data:
+            st.info("Ingen visninger fundet i den valgte periode.")
         else:
-            for serie in series_list:
-                title = serie.get("title", "Ukendt serie")
-                description = serie.get("description", "")
+            # -------------------------------------------------
+            # Sektion: Serier
+            # -------------------------------------------------
+            if series_data:
+                st.header("Serier med visninger i perioden")
+                st.write(
+                    "Herunder vises alle serier, der har visninger i den valgte periode. "
+                    "Under hver serie kan du se de konkrete filmvisninger med tid og billetlink."
+                )
 
-                with st.expander(title, expanded=False):
-                    # Beskrivelse – hvis din scraper returnerer HTML, brug unsafe_allow_html=True
-                    if description:
-                        st.markdown(description, unsafe_allow_html=True)
-                    else:
-                        st.write("Ingen beskrivelse tilgængelig.")
+                for serie in series_data:
+                    title = serie.get("title", "Ukendt serie")
+                    description = serie.get("description", "").strip()
+                    image_url = serie.get("image_url")
+                    tickets = serie.get("tickets", [])
 
-                    tickets = serie.get("tickets", []) or []
-                    if not tickets:
-                        st.write("Ingen visninger i den valgte periode.")
-                    else:
-                        films_df = pd.DataFrame(tickets)
+                    # Sortér visninger efter dato
+                    tickets = sorted(
+                        tickets,
+                        key=lambda t: t.get("date") or datetime(2100, 1, 1),
+                    )
 
-                        # Sørg for at 'date' er datetime-objekter
-                        if "date" in films_df.columns:
-                            films_df["date"] = pd.to_datetime(films_df["date"])
+                    with st.expander(title, expanded=False):
+                        # Serie-beskrivelse
+                        if image_url:
+                            img_col, txt_col = st.columns([1, 2])
+                            with img_col:
+                                st.image(image_url, use_column_width=True)
+                            with txt_col:
+                                if description:
+                                    st.write(description)
+                        else:
+                            if description:
+                                st.write(description)
 
-                        # Vis i 3-kolonne grid
-                        for i in range(0, len(films_df), 3):
-                            cols = st.columns(3)
-                            for j in range(3):
-                                if i + j < len(films_df):
-                                    row = films_df.iloc[i + j]
+                        if not tickets:
+                            st.write("Ingen visninger i den valgte periode.")
+                        else:
+                            st.subheader("Visninger i perioden")
+
+                            # Grid i rækker af 3 visninger
+                            for i in range(0, len(tickets), 3):
+                                cols = st.columns(3)
+                                for j in range(3):
+                                    idx = i + j
+                                    if idx >= len(tickets):
+                                        break
+                                    t = tickets[idx]
                                     with cols[j]:
-                                        film_title = row.get("film", "Ukendt film")
-                                        dt = row.get("date", None)
-                                        link = row.get("link", "")
-                                        is_event = bool(row.get("event", False))
+                                        film_title = t.get("film", "Ukendt film")
+                                        dt = t.get("date")
+                                        link = t.get("link")
+                                        is_event = bool(t.get("event"))
 
-                                        st.subheader(film_title)
+                                        st.markdown(f"**{film_title}**")
 
-                                        if isinstance(dt, (datetime, pd.Timestamp)):
+                                        if isinstance(dt, datetime):
                                             st.write(dt.strftime("%d.%m.%Y kl. %H:%M"))
-                                        elif isinstance(dt, str):
-                                            st.write(dt)
-                                        else:
-                                            st.write("Ukendt tidspunkt")
+
+                                        if is_event:
+                                            st.caption("Event")
 
                                         if link:
                                             st.markdown(f"[Køb billet]({link})")
 
-                                        if is_event:
-                                            st.markdown(
-                                                "<span class='event-pill'>EVENT</span>",
-                                                unsafe_allow_html=True,
-                                            )
+            # -------------------------------------------------
+            # Sektion: Enkeltfilm (alle film uanset serie)
+            # -------------------------------------------------
+            if films_data:
+                st.header("Enkeltfilm i perioden")
+                st.write(
+                    "Herunder vises et samlet overblik over alle filmvisninger i perioden, "
+                    "uanset om de er en del af en serie eller ej."
+                )
 
-        # --- ENKELTFILM / ØVRIGE VISNINGER ---
-        st.header("Enkeltfilm og øvrige visninger")
+                # Flad liste med screenings, så vi kan lave ét samlet grid
+                flat_screenings = []
+                for film in films_data:
+                    film_title = film.get("title", "Ukendt film")
+                    film_desc = (film.get("description") or "").strip()
+                    film_image = film.get("image_url")
+                    film_url = film.get("url")
+                    for s in film.get("screenings", []):
+                        dt = s.get("date")
+                        link = s.get("link")
+                        is_event = bool(s.get("event"))
 
-        films_data = data.get("films", [])
-        all_screenings = []
+                        flat_screenings.append(
+                            {
+                                "title": film_title,
+                                "description": film_desc,
+                                "image_url": film_image,
+                                "film_url": film_url,
+                                "date": dt,
+                                "link": link,
+                                "event": is_event,
+                            }
+                        )
 
-        # Forventet struktur: hvert element i data['films'] er fx:
-        # {'title': ..., 'description': ..., 'screenings': [ { 'date': ..., 'link': ..., 'event': ... }, ... ]}
-        for film in films_data:
-            screenings = film.get("screenings", []) or []
-            for sc in screenings:
-                sc_copy = sc.copy()
-                sc_copy.setdefault("title", film.get("title", "Ukendt film"))
-                sc_copy.setdefault("description", film.get("description", ""))
-                all_screenings.append(sc_copy)
+                # Sortér efter dato
+                flat_screenings = sorted(
+                    flat_screenings,
+                    key=lambda s: s.get("date") or datetime(2100, 1, 1),
+                )
 
-        if not all_screenings:
-            st.info("Ingen enkeltfilm/øvrige visninger fundet i den valgte periode.")
-        else:
-            films_df = pd.DataFrame(all_screenings)
+                if not flat_screenings:
+                    st.write("Ingen enkeltfilm i perioden.")
+                else:
+                    # Grid i rækker af 3 film
+                    for i in range(0, len(flat_screenings), 3):
+                        cols = st.columns(3)
+                        for j in range(3):
+                            idx = i + j
+                            if idx >= len(flat_screenings):
+                                break
+                            item = flat_screenings[idx]
+                            with cols[j]:
+                                title = item.get("title", "Ukendt film")
+                                desc = item.get("description", "")
+                                img = item.get("image_url")
+                                dt = item.get("date")
+                                link = item.get("link")
+                                is_event = bool(item.get("event"))
+                                film_url = item.get("film_url")
 
-            if "date" in films_df.columns:
-                films_df["date"] = pd.to_datetime(films_df["date"])
+                                if img:
+                                    st.image(img, use_column_width=True)
 
-            for i in range(0, len(films_df), 3):
-                cols = st.columns(3)
-                for j in range(3):
-                    if i + j < len(films_df):
-                        row = films_df.iloc[i + j]
-                        with cols[j]:
-                            title = row.get("title", "Ukendt film")
-                            desc = row.get("description", "")
-                            dt = row.get("date", None)
-                            link = row.get("link", "")
-                            is_event = bool(row.get("event", False))
+                                st.markdown(f"### {title}")
 
-                            st.subheader(title)
+                                if dt and isinstance(dt, datetime):
+                                    st.write(dt.strftime("%d.%m.%Y kl. %H:%M"))
 
-                            if desc:
-                                # Vis kun kort preview
-                                preview = desc[:200] + ("..." if len(desc) > 200 else "")
-                                st.write(preview)
+                                if is_event:
+                                    st.caption("Event")
 
-                            if isinstance(dt, (datetime, pd.Timestamp)):
-                                st.write(dt.strftime("%d.%m.%Y kl. %H:%M"))
-                            elif isinstance(dt, str):
-                                st.write(dt)
-                            else:
-                                st.write("Ukendt tidspunkt")
+                                # Kort tekst – så print ikke bliver alt for langt
+                                if desc:
+                                    kort = (desc[:280] + "…") if len(desc) > 280 else desc
+                                    st.write(kort)
 
-                            if link:
-                                st.markdown(f"[Køb billet]({link})")
+                                if link:
+                                    st.markdown(f"[Køb billet]({link})")
+                                elif film_url:
+                                    st.markdown(f"[Læs mere]({film_url})")
 
-                            if is_event:
-                                st.markdown(
-                                    "<span class='event-pill'>EVENT</span>",
-                                    unsafe_allow_html=True,
-                                )
-
+# ---------------------------------------------------------
 # Printvenlig CSS
+# ---------------------------------------------------------
 st.markdown(
     """
     <style>
-    /* Lille pill til EVENT */
-    .event-pill {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 999px;
-        border: 1px solid #444;
-        font-size: 0.7rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-top: 4px;
-    }
-
+    /* Gør layout mere printvenligt */
     @media print {
-        /* Skjul interaktive elementer */
-        button, .stButton, .stDateInput, header, footer {
+        header, footer, .stButton, .stDateInput, .stSidebar {
             display: none !important;
+        }
+        .block-container {
+            padding: 0 1rem !important;
         }
         body {
             color: black !important;
@@ -171,13 +204,10 @@ st.markdown(
         }
         .stExpander {
             border: none !important;
-        }
-        .css-18ni7ap, .css-1avcm0n {  /* nogle af Streamlits margin-klasser kan fjernes */
-            margin: 0 !important;
-            padding: 0 !important;
+            box-shadow: none !important;
         }
     }
     </style>
-""",
+    """,
     unsafe_allow_html=True,
 )
