@@ -2,142 +2,118 @@ import os
 import re
 import sys
 import time
-import json
-from datetime import datetime, date
-from urllib.parse import urljoin, urlparse
+from datetime import datetime
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, jsonify, request, send_from_directory
 
-# ---------------- Konfiguration ----------------
-BASE = "https://www.dfi.dk"
-START_URL = f"{BASE}/cinemateket/biograf/alle-film"
+# ---------------- Opsætning ----------------
+BASE_URL = "https://www.dfi.dk"
+START_URL = f"{BASE_URL}/cinemateket/biograf/alle-film"
 
-# Vi øger timeout, da DFI kan være langsom
-TIMEOUT = 30 
-UA = "Mozilla/5.0 (compatible; DFIPrintScraper/4.0)"
+# Vi faker en rigtig browser for at undgå blokering
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'da-DK,da;q=0.9,en-US;q=0.8,en;q=0.7'
+}
 
 app = Flask(__name__, static_folder=".", static_url_path="")
-
-# Opsætning af requests session
-session = requests.Session()
-session.headers.update({"User-Agent": UA})
-
-# Danske måneder til parsing
-DANISH_MONTHS = {
-    "jan": 1, "januar": 1, "feb": 2, "februar": 2, "mar": 3, "marts": 3, 
-    "apr": 4, "april": 4, "maj": 5, "jun": 6, "juni": 6, "jul": 7, "juli": 7, 
-    "aug": 8, "august": 8, "sep": 9, "september": 9, "okt": 10, "oktober": 10, 
-    "nov": 11, "november": 11, "dec": 12, "december": 12
-}
 
 # ---------------- Hjælpefunktioner ----------------
 
 def log(msg):
-    print(f"[SCRAPER] {msg}", flush=True)
+    """Skriver til Renders log"""
+    print(f"[LOG] {msg}", flush=True)
 
 def get_soup(url):
-    """Henter URL og returnerer BeautifulSoup objekt"""
     try:
-        r = session.get(url, timeout=TIMEOUT)
+        r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
         return BeautifulSoup(r.content, "lxml")
     except Exception as e:
         log(f"Fejl ved {url}: {e}")
         return None
 
-def parse_dfi_date(date_text, time_text):
-    """
-    Parser datoer specifikt fra billet-listen.
-    Eks: date_text="Fre 12. dec", time_text="16:15"
-    """
+def parse_danish_date(date_str, time_str):
+    """Omdanner 'Fre 12. dec' + '16:00' til datetime objekt"""
     try:
-        # Find dag og måned (Ignorer ugedag)
-        match = re.search(r"(\d+)\.?\s+([a-zæøå]+)", date_text.lower())
+        # Map danske måneder
+        months = {
+            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'maj': 5, 'jun': 6,
+            'jul': 7, 'aug': 8, 'sep': 9, 'okt': 10, 'nov': 11, 'dec': 12
+        }
+        
+        # Regex: Find "12" og "dec"
+        match = re.search(r"(\d+)\.?\s+([a-zæøå]+)", date_str.lower())
         if not match: return None
         
         day = int(match.group(1))
-        month_str = match.group(2)
-        month = DANISH_MONTHS.get(month_str[:3], 0)
+        mon_str = match.group(2)[:3] # Tag kun de første 3 bogstaver
+        month = months.get(mon_str)
         
-        if month == 0: return None
-
-        # Rens tid (fjern 'kl.' og punktummer)
-        clean_time = re.sub(r"[^0-9:]", "", time_text.replace('.', ':'))
-        if ":" not in clean_time: return None
+        if not month: return None
         
+        # Tid: 16:00
+        clean_time = re.sub(r"[^0-9:]", "", time_str.replace('.', ':'))
         hour, minute = map(int, clean_time.split(':'))
-
-        # Årstal-gætning (håndterer årsskifte)
+        
+        # Årstal logik
         now = datetime.now()
         year = now.year
-        
-        # Hvis vi er i Nov/Dec og dato er Jan/Feb/Mar -> Næste år
-        if now.month >= 11 and month <= 3:
-            year += 1
+        if now.month >= 11 and month <= 3: year += 1 # Nytårsskifte
         
         return datetime(year, month, day, hour, minute)
     except:
         return None
 
-def split_description_and_credits(soup):
-    """
-    Henter beskrivelse KUN fra content-feltet og splitter teknik fra.
-    Dette forhindrer at menuer og footere kommer med.
-    """
-    # CSS Selector specifik for DFI artikler
-    body = soup.select_one(".field-name-body .field-item") or soup.select_one("article .content")
+def get_all_film_links():
+    """Henter ALLE links der ligner film fra oversigten."""
+    film_links = set()
     
-    if not body: return "", ""
-    
-    # Hent tekst med linjeskift
-    full_text = body.get_text("\n", strip=True)
-    lines = full_text.split('\n')
-    
-    desc_lines = []
-    credit_lines = []
-    is_credits = False
-    
-    # Markører der starter teknik-sektionen
-    split_markers = [
-        "Instruktør:", "Medvirkende:", "Original titel:", "USA,", "Danmark,", 
-        "Frankrig,", "Storbritannien,", "Sverige,", "Stemmer:", "Længde:", "Tilladt for", "Manuskript:"
-    ]
-    
-    blacklist = ["Læs mere", "Bestil billet", "Køb billetter", "Se mere"]
-    
-    for line in lines:
-        l = line.strip()
-        if not l: continue
-        if any(b in l for b in blacklist): continue
+    # Vi scanner de første 5 sider. DFI viser ca 24 film pr side.
+    # 5 sider = ca 120 film frem i tiden. Det burde dække de næste 4-7 dage rigeligt.
+    for page in range(5):
+        url = f"{START_URL}?page={page}"
+        log(f"Scanner side {page}: {url}")
         
-        # Detektion af credits sektion
-        if not is_credits:
-            if any(l.startswith(m) for m in split_markers):
-                is_credits = True
-            # Regex for "Land, Årstal" (eks: "USA, 1950")
-            elif re.search(r"^[A-ZÆØÅ][a-zæøå]+,\s*(19|20)\d{2}", l):
-                is_credits = True
-                
-        if is_credits:
-            credit_lines.append(l)
-        else:
-            desc_lines.append(l)
-            
-    return "\n".join(desc_lines), ", ".join(credit_lines)
+        soup = get_soup(url)
+        if not soup: break
+        
+        # FIND ALLE LINKS (Støvsuger-metoden)
+        # Vi filtrerer i Python i stedet for CSS selector for at være sikre
+        all_anchors = soup.find_all("a", href=True)
+        count = 0
+        
+        for a in all_anchors:
+            href = a['href']
+            # Kriterie: Skal indeholde /film/ og må ikke være admin/db støj
+            if "/film/" in href and "viden-om-film" not in href:
+                full_url = urljoin(BASE_URL, href)
+                film_links.add(full_url)
+                count += 1
+        
+        log(f"  -> Fandt {count} potentielle film på side {page}")
+        
+    return list(film_links)
 
-def extract_screenings(soup, start_date, end_date):
-    """
-    Kernefunktionen: Finder visninger KUN i billet-listen.
-    Ignorerer åbningstider og footer-tekst.
-    """
-    screenings = []
+def scrape_film_details(url, start_date_obj, end_date_obj):
+    """Går ind på en film og henter detaljer + KUN relevante tider."""
+    soup = get_soup(url)
+    if not soup: return None
     
-    # 1. Den primære metode: DFI's specifikke liste-container
-    # Vi leder efter .ct-cinema-movie-showings__list-item
+    # 1. Hent tider KUN fra billet-listen
+    # Vi ignorerer alt andet tekst på siden for at undgå åbningstider
+    valid_screenings = []
     rows = soup.select(".ct-cinema-movie-showings__list-item")
     
+    if not rows:
+        # Fallback: Hvis der slet ingen liste er, er det måske et special-event?
+        # Vi leder efter knapper med "billet" i teksten
+        pass # (Implementer evt senere, men listen dækker 99%)
+
     for row in rows:
         try:
             d_el = row.select_one(".ct-cinema-movie-showings__date")
@@ -145,65 +121,68 @@ def extract_screenings(soup, start_date, end_date):
             btn = row.select_one("a.btn")
             
             if d_el and t_el:
-                dt = parse_dfi_date(d_el.get_text(strip=True), t_el.get_text(strip=True))
+                dt = parse_danish_date(d_el.get_text(strip=True), t_el.get_text(strip=True))
                 
-                # Tjek om datoen er gyldig og inden for range
                 if dt:
-                    dt_date = dt.date()
-                    start_d = datetime.strptime(start_date, "%Y-%m-%d").date()
-                    end_d = datetime.strptime(end_date, "%Y-%m-%d").date()
-                    
-                    if start_d <= dt_date <= end_d:
-                        status = "Ledig"
-                        if "udsolgt" in row.get_text().lower(): status = "Udsolgt"
-                        
-                        screenings.append({
-                            "iso_dt": dt.isoformat(),
-                            "display": dt.strftime("%d/%m kl. %H:%M"),
+                    # TJEK DATO FILTER HER
+                    if start_date_obj <= dt <= end_date_obj:
+                        status = "Udsolgt" if "udsolgt" in row.get_text().lower() else "Ledig"
+                        valid_screenings.append({
                             "sort_key": dt.timestamp(),
+                            "display": dt.strftime("%d/%m kl. %H:%M"),
                             "link": btn['href'] if btn else "#",
                             "status": status
                         })
-        except Exception:
+        except:
             continue
             
-    return sorted(screenings, key=lambda x: x['sort_key'])
-
-def fetch_details_for_url(url, start_date, end_date):
-    """Går ind på filmsiden og henter alt."""
-    soup = get_soup(url)
-    if not soup: return None
-    
-    # 1. Tjek visninger først (Optimering: Hvis ingen visninger, skip resten)
-    screenings = extract_screenings(soup, start_date, end_date)
-    if not screenings:
+    # HVIS INGEN VISNINGER I PERIODEN: STOP HER (Spar tid)
+    if not valid_screenings:
         return None
         
-    # 2. Titel
+    # 2. Hent Metadata (Titel, Billede, Beskrivelse)
     h1 = soup.find("h1")
     title = h1.get_text(strip=True) if h1 else "Ukendt Titel"
     
-    # 3. Tekst (Beskrivelse vs Credits)
-    desc, credits = split_description_and_credits(soup)
-    
-    # 4. Billede
+    # Billede
     img = soup.select_one(".media-element-container img") or soup.select_one("article img")
-    img_url = urljoin(BASE, img['src']) if img else None
+    img_url = urljoin(BASE_URL, img['src']) if img else None
     
-    # 5. Serie info
-    series_title = "Øvrige Film & Events"
+    # Beskrivelse (Split credits fra)
+    body = soup.select_one(".field-name-body .field-item") or soup.select_one("article .content")
+    full_text = body.get_text("\n", strip=True) if body else ""
+    
+    lines = full_text.split('\n')
+    desc_lines = []
+    credit_lines = []
+    is_credits = False
+    
+    markers = ["Instruktør:", "Medvirkende:", "Original titel:", "USA,", "Danmark,", "Længde:", "Tilladt for"]
+    
+    for l in lines:
+        l = l.strip()
+        if not l or l in ["Læs mere", "Bestil billet", "Se mere"]: continue
+        
+        if not is_credits:
+            if any(l.startswith(m) for m in markers): is_credits = True
+            elif re.search(r"^[A-ZÆØÅ][a-zæøå]+,\s*(19|20)\d{2}", l): is_credits = True
+        
+        if is_credits: credit_lines.append(l)
+        else: desc_lines.append(l)
+            
+    # Serie Info
+    series_name = "Øvrige Film & Events"
     s_link = soup.select_one(".field-name-field-cinemateket-series a")
     if s_link:
-        series_title = s_link.get_text(strip=True)
+        series_name = s_link.get_text(strip=True)
 
     return {
         "title": title,
-        "description": desc,
-        "credits": credits,
+        "desc": "\n".join(desc_lines),
+        "credits": ", ".join(credit_lines),
         "image": img_url,
-        "screenings": screenings,
-        "series": series_title,
-        "url": url
+        "screenings": sorted(valid_screenings, key=lambda x: x['sort_key']),
+        "series": series_name
     }
 
 # ---------------- Routes ----------------
@@ -220,55 +199,47 @@ def program():
     if not d_from or not d_to:
         return jsonify({"error": "Mangler datoer"}), 400
         
-    log(f"Starter scraping fra {d_from} til {d_to}")
+    # Konverter string datoer til datetime
+    try:
+        start_dt = datetime.strptime(d_from, "%Y-%m-%d")
+        # Sæt slut-tid til slutningen af dagen (23:59:59)
+        end_dt = datetime.strptime(d_to, "%Y-%m-%d").replace(hour=23, minute=59)
+    except:
+        return jsonify({"error": "Ugyldigt datoformat"}), 400
+
+    log(f"STARTER SCRAPING: {start_dt} til {end_dt}")
     
-    all_film_links = set()
+    # 1. Hent alle potentielle links
+    links = get_all_film_links()
+    log(f"Fandt totalt {len(links)} unikke links at tjekke.")
     
-    # 1. Scan oversigten (Alle film)
-    # Vi scanner 8 sider for at være sikre på at fange film der måske ligger lidt nede
-    # men har visninger snart.
-    for page in range(8):
-        url = f"{START_URL}?page={page}"
-        soup = get_soup(url)
-        if not soup: break
+    # 2. Besøg hver og filtrer
+    results = {}
+    
+    for i, link in enumerate(links):
+        # Log status hver 5. film så du kan se fremskridt
+        if i % 5 == 0: log(f"Behandler {i}/{len(links)}...")
         
-        links = soup.select("a[href^='/cinemateket/biograf/alle-film/film/']")
-        if not links: break # Stop hvis siden er tom
-        
-        for a in links:
-            all_film_links.add(urljoin(BASE, a['href']))
-            
-    log(f"Fandt {len(all_film_links)} unikke film-links. Tjekker detaljer...")
-    
-    # 2. Besøg hver film
-    series_map = {}
-    
-    for link in list(all_film_links):
-        data = fetch_details_for_url(link, d_from, d_to)
+        data = scrape_film_details(link, start_dt, end_dt)
         
         if data:
             s_name = data['series']
-            if s_name not in series_map:
-                series_map[s_name] = []
-            series_map[s_name].append(data)
+            if s_name not in results: results[s_name] = []
+            results[s_name].append(data)
             
-    # 3. Formatér til JSON output
-    output_series = []
-    
-    # Sorter serier
-    for name, films in series_map.items():
-        # Sorter film internt efter dato
-        films.sort(key=lambda x: x['screenings'][0]['sort_key'])
+    # 3. Formatér output
+    final_output = []
+    for name, items in results.items():
+        # Sorter film internt efter første visning
+        items.sort(key=lambda x: x['screenings'][0]['sort_key'])
+        final_output.append({"name": name, "items": items})
         
-        output_series.append({
-            "name": name,
-            "items": films
-        })
+    # Sorter serier efter første film i serien
+    if final_output:
+        final_output.sort(key=lambda s: s['items'][0]['screenings'][0]['sort_key'])
         
-    # Sorter listen af serier efter datoen på den første film i serien
-    output_series.sort(key=lambda s: s['items'][0]['screenings'][0]['sort_key'])
-    
-    return jsonify({"series": output_series})
+    log(f"Færdig! Fandt {sum(len(s['items']) for s in final_output)} film.")
+    return jsonify({"series": final_output})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
